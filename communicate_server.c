@@ -41,6 +41,7 @@ server_write_1(Article_t Article,  CLIENT *clnt)
 	return (&clnt_res);
 }
 
+// this works for server-server or client-server
 int *
 write_1(Article_t Article, int Nw, char *sender_ip, char *sender_port,  CLIENT *clnt)
 {
@@ -75,6 +76,15 @@ get_seqnum_1(CLIENT *clnt)
 }
 
 // _________________________________end of rpc call fcns_____________________________
+
+/*
+called on a timer every 30 seconds
+qourum sync() {
+	for each other server
+	if they have a higher seqnum and seqnums that we don't have in articles, then ask for missing articles using read rpc
+}
+
+*/
 
 // state for the server
 
@@ -351,7 +361,7 @@ read_1_svc(int Page_num, int Nr, struct svc_req *rqstp)
 	articles[1].seqnum = 2;
 	articles[1].reply_seqnum = 1;
 	*/
-	static Page_t  result;
+	static Page_t result;
 
 	printf("a client read 10 articles from page %d\n", Page_num);
 
@@ -370,6 +380,7 @@ read_1_svc(int Page_num, int Nr, struct svc_req *rqstp)
 		result.articles[i] = articles[i + (Page_num*10)];
 	}
 
+	// in the case of a qourum, contact primary (unless we are the primary) and ask it to contact Nr normal servers
 
 	return &result;
 }
@@ -385,6 +396,9 @@ get_mode_1_svc(struct svc_req *rqstp)
 }
 
 // used only when connecting to a new server and mode is local-write
+
+// when a client connects to a new server for local write, it calls fetch with it's saved seqnums, so that the server can retrieve those from the other servers
+// read your writes consistency
 bool_t *
 fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 {
@@ -398,6 +412,8 @@ fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 }
 
 // works differently based on mode
+// can be called either client to server, or server to server
+//returns a seqnum of the written article
 int *
 write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  struct svc_req *rqstp)
 {	
@@ -410,9 +426,12 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 
 	// get seqnum for article only if the client is the one who has contacted us:
 	
+	// seqnum is not set on a client-server rpc, but it is set on server-server rpcs
+	// if it's set, no need to get a seqnum
 	if (Article.seqnum == -1) {
 		int seqnum;
 		if (amPrimary == TRUE) {
+			// THIS is the primary, give out a seqnum
 			seqnum = available_seqnum;
 
 			//update state
@@ -420,7 +439,7 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 			available_seqnum++;
 
 		} else {
-
+			// normal server gets seqnum from primary
 			result_6 = get_seqnum_1(primary_server);
 
 			if (result_6 == (int *) NULL) {
@@ -435,9 +454,10 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		Article.seqnum = seqnum;
 	}
 
-
+	// writes happen differently based on mode
 	if (strcmp(mode, "primary-backup") == 0) {
 		
+		//primary contacts everyone regardless of who client or server, started the rpc
 		if (amPrimary == TRUE) {
 			printf("contacting normal servers\n");
 			// contact normal servers with the article
@@ -445,6 +465,7 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 
 				//printf("server ip: %s server port: %s given ip: %s given port: %s\n", servers_info[i].ip, servers_info[i].port, sender_ip, sender_port);
 				// ensure that servers we are sending too are not the sender server
+				// lets say this is a server-server rpc, then don't write to the sending server, because it already knows that it needs to write
 				if ( (strcmp(servers_info[i].ip, sender_ip) == 0) && (strncmp(servers_info[i].port, sender_port, (strlen(sender_port)-1)) == 0) ) {
 					continue;
 				}
@@ -467,7 +488,7 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 				result = FALSE;
 				return &result;
 			}
-			// write the article
+			// primary also writes the article to itself, this way it doesn't call server_write on itself
 			strncpy(articles[next_aval_article_slot].text, Article.text, 120);
 			articles[next_aval_article_slot].reply_seqnum = Article.reply_seqnum;
 			articles[next_aval_article_slot].seqnum = Article.seqnum;
@@ -475,6 +496,8 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 
 			result = Article.seqnum;
 		} else {
+			// we got the rpc, and we are not the primary
+
 			printf("contacting primary\n");
 			// ask primary to contact all servers
 			result_5 = write_1(Article, Nw, server_ip, server_port_str, primary_server);
@@ -489,7 +512,7 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 				return &result;
 
 			} else {
-				// write article too ourselves and return:
+				// write article too ourselves and return, since we didn't call server_write on ourselves:
 
 				// check if article can be written
 				if (next_aval_article_slot >= NUM_ARTICLES) {
@@ -509,12 +532,24 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		}
 
 	} else if (strcmp(mode, "quorum") == 0) {
+		// a normal server asks the primary to contact Nw servers, based on the Nw the client asked for.
+		// so similarily to before, a normal server forwards this rpc call from the client, by making this rpc call to the server
+		// to make this happen we have two cases primary or not primary as before. 
+
+		// in a qourum, each server has a timer interupt, which causes it to contact other servers and ask for missing articles. It can know if it has missing articles
+		// by asking for the highest seqnum at the server using get_seqnum. and it can request missing articles using choose. All of this is done by using the rpc object at servers[i].
+		// choose is only done by server-server rpcs, to get an article with a specific seqnum.
+		// A client requests pages and it can choose from the page. 
 		/*
+
 		if (amPrimary == TRUE) {
 			printf("contacting nW servers\n");
 			
 			// contact Nw normal servers with the article
 			
+			// from our servers objects, we want to pick Nw amount of them and server_write to them, but we don't want to pick the same one twice
+			// so we save that in contacted_nums of servers
+
 			int contacted_nums[Nw];
 			memset(contacted_nums, -1, sizeof(contacted_nums));
 			int contacted_nums_aval_slot = 0;
@@ -524,7 +559,7 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 			for (int i = 0; i < Nw; i++) {
 				
 				// get a random number to determine which server to contact
-				
+				// pick server we haven't seen before
 				while (TRUE) {
 					int upper = num_normal_servers;
 					int lower = 0;
@@ -550,9 +585,11 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 
 				struct svc_req *rqstp
 
-
+				//contact the server we picked randomly
 				result_7 = server_write_1(Article, servers[random_num]);
 				
+				// a similar primary and non primary structure should happen on a read, where the server forwards the read to the primary, and the primary reads from Nr servers 
+
 				// return -1 to signify failure and allow the server to keep the article or allow it to be lost
 				// the client should not expect that this article write has been applied
 				if (result_7 == (bool_t *) NULL) {
@@ -560,9 +597,11 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 					result = -1;
 					return &result;
 				}
-			}
+			} // end of for loop, primary has contacted Nw servers
 
 		} else {
+			// case of a qourum write where this isn't the primary, so forward this write via an rpc to the primary
+
 			printf("contacting primary\n");
 			// ask primary to contact Nw servers
 			result_5 = write_1(Article, Nr, Nw, primary_server);
@@ -582,6 +621,16 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		}
 	*/
 	} else if (strcmp(mode, "local-write") == 0) {
+		// in the local write, it doesn't matter if the server is normal or not, 
+		// the server must write to itself and then return to the client, (local!)
+		// However, it must still lazly write to the servers it knows. 
+		// Add the article (that's whats getting written) to a queue, which is picked up by a reader thread
+		// And, the reader thread pops from the queue and writes to all the servers (in a for loop) using server_write w/o sideeffects
+		// 
+
+		// Also, the client may switch servers, and will call fetch, so that a server can get all of the articles the client wrote.
+		// Thats what Written_seqnums_t from the client is for. client calls fetch_articles_1_svc on joining a server and gives the server the seqnums it wrote. This way the client see their writes.
+		// on a fetch, find a server that has the articles, which may involve contacting multiple servers
 	/*
 		printf("contacting normal servers\n");
 		// contact all servers with the article
@@ -611,6 +660,8 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 /* _____________ server rpc calls made between servers: _____________ */
 
 // only the primary can give out seqnums for new articles
+// all modes require contacting the primary for an available seqnum
+// this way servers do not issue conflicting seqnums for articles
 int *
 get_seqnum_1_svc(struct svc_req *rqstp)
 {
@@ -632,6 +683,7 @@ get_seqnum_1_svc(struct svc_req *rqstp)
 }
 
 
+// save an article to THIS server, do nothing else
 bool_t *
 server_write_1_svc(Article_t Article,  struct svc_req *rqstp)
 {
@@ -679,6 +731,7 @@ highest_seqnum_1_svc(struct svc_req *rqstp)
 }
 
 // only used during quorum sync 
+// use for qourum sync, or local write fetch, to get a article with a specific seqnum from a server
 Article_t *
 choose_1_svc(int Seqnum,  struct svc_req *rqstp)
 {

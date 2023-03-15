@@ -210,16 +210,19 @@ void cmd_loop() {
 			}
 
 		} else if (strcmp(token, "post") == 0){
+			//bug just get whole text
+
 			char *text = strtok(NULL, " ");
 			if (text == NULL) {
 				printf("post failed, no article was provided\n");
 				continue;
 			}
 
+
 			// create article
 			write_1_Article.reply_seqnum = -1;
 			write_1_Article.seqnum = -1;
-			strncpy(write_1_Article.text, text, 120);
+			strncpy(write_1_Article.text, (usrBuf+8), 120);   				
 
 			// post rpc based on mode
 
@@ -229,19 +232,7 @@ void cmd_loop() {
 			write_1_sender_ip = "unknown";
 			write_1_sender_port = "unknown";
 
-			if (strcmp(mode, "primary-backup") == 0) {
-				result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt);
-
-			} else if (strcmp(mode, "quorum") == 0) {
-				result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt);
-
-			} else if (strcmp(mode, "local-write") == 0) {
-				result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt);
-
-			} else {
-				printf("Server's mode is invalid\n");
-				continue;
-			}
+			result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt); //TIMES OUT BUG
 
 
 			// display rpc result
@@ -266,8 +257,6 @@ void cmd_loop() {
 
 			read_1_Page_num = atoi(read_1_Page_num_str);
 
-
-
 			// rpc call
 
 			read_1_Nr = Nr;
@@ -278,6 +267,7 @@ void cmd_loop() {
 				clnt_perror (clnt, "call failed");
 			} else {
 				print_page(*result_2);
+				pagebuf = *result_2;
 			}
 
 
@@ -294,7 +284,7 @@ void cmd_loop() {
 			// create article
 			write_1_Article.reply_seqnum = atoi(reply_seqnum_str);
 			write_1_Article.seqnum = -1;
-			strncpy(write_1_Article.text, text, 120);
+			strncpy(write_1_Article.text, (usrBuf+5), 120);
 
 			// post rpc based on mode
 
@@ -304,19 +294,8 @@ void cmd_loop() {
 			write_1_sender_ip = "unknown";
 			write_1_sender_port = "unknown";
 
-			if (strcmp(mode, "primary-backup") == 0) {
-				result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt);
+			result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt);
 
-			} else if (strcmp(mode, "quorum") == 0) {
-				result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt);
-
-			} else if (strcmp(mode, "local-write") == 0) {
-				result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt);
-
-			} else {
-				printf("Server's mode is invalid\n");
-				continue;
-			}
 
 
 			// display rpc result
@@ -368,7 +347,31 @@ void cmd_loop() {
 				return;
 			}
 
-		} else {
+		}  else if (strcmp(token, "choose") == 0){
+			char *seqnum_str = strtok(NULL, " ");
+
+			if ( seqnum_str == NULL ){
+				printf("choose failed, the provided seqnum was invalid\n");
+				continue;
+			}
+
+			int seqnum = atoi(seqnum_str);
+			
+			bool_t found = FALSE;
+			// find the seqnum in the page
+			// page always has 10 articles even if they are all empty. Empty articles have an invalid seqnum of 0.
+			for (int i = 0; i < 10; i++) {
+				if (pagebuf.articles[i].seqnum == seqnum) {
+					// we found the article
+					printf("Article: %s\n", pagebuf.articles[i].text);
+					found = TRUE;
+					break;
+				}
+			}
+			if (found == FALSE) {
+				printf("Article not found\n");
+			}
+		}else {
 			printf("command not found\n");
 		}
 
