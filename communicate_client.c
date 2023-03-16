@@ -28,6 +28,8 @@ Page_t pagebuf;
 
 // used for keeping track of written seqnums
 Written_seqnums_t written_seqnums;
+int latest_written_seqnum; // keeps track of highest index of written_seqnums
+
 
 // returns TRUE if mode is valid
 bool_t check_mode(char *mode) {
@@ -232,7 +234,7 @@ void cmd_loop() {
 			write_1_sender_ip = "unknown";
 			write_1_sender_port = "unknown";
 
-			result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt); //TIMES OUT BUG
+			result_5 = write_1(write_1_Article, write_1_Nw, write_1_sender_ip, write_1_sender_port, clnt); 
 
 
 			// display rpc result
@@ -244,6 +246,8 @@ void cmd_loop() {
 			} else {
 				printf("posted successfully\n");
 			}
+			written_seqnums.seqnums[latest_written_seqnum] = *result_5;
+			latest_written_seqnum++;
 
 		} else if (strcmp(token, "read") == 0){
 			// get arg from cmd
@@ -346,6 +350,7 @@ void cmd_loop() {
 				printf("Failed to setup the new connection\n");
 				return;
 			}
+			fetch_articles_1(written_seqnums, clnt);		//local_write only
 
 		}  else if (strcmp(token, "choose") == 0){
 			char *seqnum_str = strtok(NULL, " ");

@@ -25,6 +25,20 @@
 // _________________________________rpc call fcns, for server-server calls___________
 #include <memory.h> /* for memset */
 static struct timeval TIMEOUT = { 25, 0 };
+Article_t *
+choose_1(int Seqnum,  CLIENT *clnt)
+{
+	static Article_t clnt_res;
+
+	memset((char *)&clnt_res, 0, sizeof(clnt_res));
+	if (clnt_call (clnt, Choose,
+		(xdrproc_t) xdr_int, (caddr_t) &Seqnum,
+		(xdrproc_t) xdr_Article_t, (caddr_t) &clnt_res,
+		TIMEOUT) != RPC_SUCCESS) {
+		return (NULL);
+	}
+	return (&clnt_res);
+}
 
 bool_t *
 server_write_1(Article_t Article,  CLIENT *clnt)
@@ -115,6 +129,14 @@ bool_t amPrimary = FALSE;
 Article_t articles[NUM_ARTICLES];
 int next_aval_article_slot = 0;
 
+Article_t articles_to_send[NUM_ARTICLES];
+int rear=-1;
+int front=-1;
+
+
+void *read_article_send_queue(void* x){
+
+}
 
 // setup the rpc connection object:
 CLIENT *setup_connection(char *con_server_ip, char *con_server_port) {
@@ -403,11 +425,62 @@ bool_t *
 fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 {
 	static bool_t  result;
-
-	/*
-	 * insert server code here
-	 */
-
+	if (strcmp(mode, "local-write") == 0){
+		printf("recieved fetch rpc call\n");
+		int seqnums_needed[NUM_ARTICLES];
+		int num_seqnums_needed = 0;
+		//check if we have the articles that the client is asking for
+		for (int i = 0; i < NUM_ARTICLES; i++) {
+			int seqnum = written_seqnums.seqnums[i];
+			// check if we have the article with that seqnum
+			if (seqnum == 0){
+				continue;
+			}
+			for (int j = 0; j < NUM_ARTICLES; j++) {
+				if (articles[j].seqnum == seqnum) {
+					// we have the article, so we don't need to fetch it
+					break;
+				}
+				// we don't have the article, so we need to fetch it
+				seqnums_needed[num_seqnums_needed] = seqnum;
+				num_seqnums_needed++;
+			}
+		}
+		// if we don't have any articles, we don't need to fetch anything
+		if (num_seqnums_needed == 0) {
+			result = TRUE;
+			return &result;
+		}
+		// we need to fetch articles from the other servers
+		// get the articles any other servers that we are connected to
+		Article_t* returned_article;
+		int num_acquired = 0;
+		for (int i = 0; i<num_seqnums_needed; i++) {
+			// for every article needed, contact every server
+			for (int j = 0; j< num_normal_servers; j++) {
+				returned_article = choose_1(seqnums_needed[i], servers[j]);
+				if (returned_article->seqnum == seqnums_needed[i]) {
+					// we got the article, so we don't need to contact any more servers
+					//write the article to our local storage
+					// check if article can be written
+					if (next_aval_article_slot >= NUM_ARTICLES) {
+						result = FALSE;
+						return &result;
+					}
+					// primary also writes the article to itself, this way it doesn't call server_write on itself
+					strncpy(articles[next_aval_article_slot].text, returned_article->text, 120);
+					articles[next_aval_article_slot].reply_seqnum = returned_article->reply_seqnum;
+					articles[next_aval_article_slot].seqnum = returned_article->seqnum;
+					next_aval_article_slot++;
+					num_acquired++;
+					break;
+				}
+				result = FALSE; // if we get here that means we did not find a result 
+				return &result;
+			}
+		}
+		result = TRUE; // found all seq nums and wrote them, return true
+	}
 	return &result;
 }
 
@@ -631,23 +704,47 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		// Also, the client may switch servers, and will call fetch, so that a server can get all of the articles the client wrote.
 		// Thats what Written_seqnums_t from the client is for. client calls fetch_articles_1_svc on joining a server and gives the server the seqnums it wrote. This way the client see their writes.
 		// on a fetch, find a server that has the articles, which may involve contacting multiple servers
-	/*
-		printf("contacting normal servers\n");
-		// contact all servers with the article
-		for (int i = 0; i < num_normal_servers; i++) {
-		
-			struct svc_req *rqstp
-			result_7 = server_write_1(Article, servers[i]);
-			
-			// return -1 to signify failure and allow the server to keep the article or allow it to be lost
-			// the client should not expect that this article write has been applied
-			if (result_7 == (bool_t *) NULL) {
-				clnt_perror (servers[i], "call failed");
-				result = -1;
-				return &result;
-			}
+	
+
+		// create a thread to write to the servers
+		// the thread will pop from the queue and write to the servers
+
+		// pthread_t pid;  // THIS NEEDS TO BE MOVED TO a main???
+
+		// pthread_create(&pid, NULL, &read_article_send_queue,NULL);
+
+
+
+		//write to ourselves
+		if (next_aval_article_slot >= NUM_ARTICLES) {
+			result = FALSE;
+			return &result;
 		}
-	*/
+		strncpy(articles[next_aval_article_slot].text, Article.text, 120);
+		articles[next_aval_article_slot].reply_seqnum = Article.reply_seqnum;
+		articles[next_aval_article_slot].seqnum = Article.seqnum;
+		next_aval_article_slot++;
+
+		result = Article.seqnum;
+		return &result;
+		
+
+		// printf("contacting normal servers\n");
+		// // contact all servers with the article
+		// for (int i = 0; i < num_normal_servers; i++) {
+		
+		// 	struct svc_req *rqstp;
+		// 	result_7 = server_write_1(Article, servers[i]);
+			
+		// 	// return -1 to signify failure and allow the server to keep the article or allow it to be lost
+		// 	// the client should not expect that this article write has been applied
+		// 	if (result_7 == (bool_t *) NULL) {
+		// 		clnt_perror (servers[i], "call failed");
+		// 		result = -1;
+		// 		return &result;
+		// 	}
+		// }
+	
 	} else {
 		printf("Server's mode is invalid\n");
 		result = -1;
