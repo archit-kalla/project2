@@ -248,7 +248,7 @@ void cmd_loop() {
 			}
 			written_seqnums.seqnums[latest_written_seqnum] = *result_5;
 			latest_written_seqnum++;
-
+			written_seqnums.num_seqnums = latest_written_seqnum;
 		} else if (strcmp(token, "read") == 0){
 			// get arg from cmd
 

@@ -7,7 +7,7 @@
 #define _COMMUNICATE_H_RPCGEN
 
 #include <rpc/rpc.h>
-
+#include <sys/queue.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +21,13 @@ struct Article_t {
 };
 typedef struct Article_t Article_t;
 
+//QUEUE DEFINITIONS
+struct article_queue_entry {
+	Article_t article;
+	STAILQ_ENTRY(article_queue_entry) entries;
+};
+typedef struct article_queue_entry article_queue_entry;
+
 struct Page_t {
 	Article_t articles[10];
 };
@@ -28,6 +35,7 @@ typedef struct Page_t Page_t;
 
 struct Written_seqnums_t {
 	int seqnums[50];
+	int num_seqnums;
 };
 typedef struct Written_seqnums_t Written_seqnums_t;
 

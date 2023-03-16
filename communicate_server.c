@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <sys/queue.h>
 
 #define NUM_ARTICLES 50
 #define ARTICLE_LEN 120
@@ -129,12 +130,57 @@ bool_t amPrimary = FALSE;
 Article_t articles[NUM_ARTICLES];
 int next_aval_article_slot = 0;
 
-Article_t articles_to_send[NUM_ARTICLES];
-int rear=-1;
-int front=-1;
+// QUEUE DEFINITIONS
+pthread_mutex_t lock;
+STAILQ_HEAD(stailhead, article_queue_entry);
+struct stailhead head;
 
-
+// queue reader thread
 void *read_article_send_queue(void* x){
+	while(1){
+		bool_t queue_empty = FALSE;
+		pthread_mutex_lock(&lock);
+		if(STAILQ_EMPTY(&head) == 0){
+			queue_empty = FALSE;
+		}
+		else{
+			queue_empty = TRUE;
+		}
+		pthread_mutex_unlock(&lock);
+
+		if(queue_empty == FALSE){
+			//get head of queue
+			struct article_queue_entry *entry;
+			pthread_mutex_lock(&lock);
+			entry = STAILQ_FIRST(&head);
+			STAILQ_REMOVE_HEAD(&head, entries);
+			printf("removed entry from queue\n");
+			pthread_mutex_unlock(&lock);
+			printf("article: %s\n", entry->article.text);
+			//send article to primary server if we are not the primary
+			if (amPrimary==FALSE){
+				bool_t *result = server_write_1(entry->article, primary_server);
+				if (result ==FALSE) {
+					printf("writing server call failed\n");
+				}
+			}
+			
+
+			//send articles to all servers
+			if (num_normal_servers>1){ // if there is 1 normal server and we are it, then we don't need to send to anyone
+				for (int i = 0; i < num_normal_servers; i++) {
+				if ( (strcmp(servers_info[i].ip, server_ip) == 0) && (strcmp(servers_info[i].port, server_port_str) == 0) ) {
+					continue;
+				}
+				bool_t *result = server_write_1(entry->article, servers[i]);
+				if (result == FALSE) {
+					printf("writing server call failed\n");
+				}
+			}
+			}
+			
+		}
+	}
 
 }
 
@@ -354,6 +400,20 @@ void initialize(char *_server_ip, char *_server_port_str, char *_mode) {
 		printf("failed to setup connections to servers\n");
 		exit(EXIT_FAILURE);
 	}
+
+	// init thread
+	pthread_t thread_id;
+	pthread_create(&thread_id, NULL, &read_article_send_queue, NULL);
+
+	//initialize queue
+	
+	STAILQ_INIT(&head);	
+	if (pthread_mutex_init(&lock, NULL) != 0) {
+        printf("\n mutex init has failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+
 }
 
 /* _____________ rpc calls made by clients: _____________ */
@@ -430,7 +490,7 @@ fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 		int seqnums_needed[NUM_ARTICLES];
 		int num_seqnums_needed = 0;
 		//check if we have the articles that the client is asking for
-		for (int i = 0; i < NUM_ARTICLES; i++) {
+		for (int i = 0; i < written_seqnums.num_seqnums; i++) {
 			int seqnum = written_seqnums.seqnums[i];
 			// check if we have the article with that seqnum
 			if (seqnum == 0){
@@ -457,7 +517,30 @@ fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 		int num_acquired = 0;
 		for (int i = 0; i<num_seqnums_needed; i++) {
 			// for every article needed, contact every server
+			//if we arent the primary, contact the primary first
+			if (amPrimary==FALSE){
+				returned_article = choose_1(seqnums_needed[i], primary_server);
+				if (returned_article->seqnum == seqnums_needed[i]) {
+					// we got the article, so we don't need to contact any more servers
+					//write the article to our local storage
+					// check if article can be written
+					if (next_aval_article_slot >= NUM_ARTICLES) {
+						result = FALSE;
+						return &result;
+					}
+					strncpy(articles[next_aval_article_slot].text, returned_article->text, 120);
+					articles[next_aval_article_slot].reply_seqnum = returned_article->reply_seqnum;
+					articles[next_aval_article_slot].seqnum = returned_article->seqnum;
+					next_aval_article_slot++;
+					num_acquired++;
+					continue;
+				}
+			}
+			//check rest of the servers
 			for (int j = 0; j< num_normal_servers; j++) {
+				if ( (strcmp(servers_info[j].ip, server_ip) == 0) && (strcmp(servers_info[j].port, server_port_str) == 0) ) { // we dont want to contact ourselves
+					continue;
+				}
 				returned_article = choose_1(seqnums_needed[i], servers[j]);
 				if (returned_article->seqnum == seqnums_needed[i]) {
 					// we got the article, so we don't need to contact any more servers
@@ -724,26 +807,24 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		articles[next_aval_article_slot].reply_seqnum = Article.reply_seqnum;
 		articles[next_aval_article_slot].seqnum = Article.seqnum;
 		next_aval_article_slot++;
+		printf("wrote to self\n");
+
+		//add to the queue
+		article_queue_entry *new_node = malloc(sizeof(article_queue_entry));
+		strncpy(new_node->article.text, Article.text, 120);
+		new_node->article.reply_seqnum = Article.reply_seqnum;
+		new_node->article.seqnum = Article.seqnum;
+		
+		//lock mutex
+		pthread_mutex_lock(&lock);
+		// add to the queue
+		STAILQ_INSERT_TAIL(&head, new_node, entries);
+		printf("added to queue\n");
+		pthread_mutex_unlock(&lock);
+
 
 		result = Article.seqnum;
 		return &result;
-		
-
-		// printf("contacting normal servers\n");
-		// // contact all servers with the article
-		// for (int i = 0; i < num_normal_servers; i++) {
-		
-		// 	struct svc_req *rqstp;
-		// 	result_7 = server_write_1(Article, servers[i]);
-			
-		// 	// return -1 to signify failure and allow the server to keep the article or allow it to be lost
-		// 	// the client should not expect that this article write has been applied
-		// 	if (result_7 == (bool_t *) NULL) {
-		// 		clnt_perror (servers[i], "call failed");
-		// 		result = -1;
-		// 		return &result;
-		// 	}
-		// }
 	
 	} else {
 		printf("Server's mode is invalid\n");
@@ -784,6 +865,8 @@ get_seqnum_1_svc(struct svc_req *rqstp)
 bool_t *
 server_write_1_svc(Article_t Article,  struct svc_req *rqstp)
 {
+	printf("server_write_1_svc called\n");
+	printf("Article.text: %s\n", Article.text);
 	static bool_t  result;
 
 	// check if article can be written
