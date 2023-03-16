@@ -519,7 +519,7 @@ fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 			// for every article needed, contact every server
 			//if we arent the primary, contact the primary first
 			if (amPrimary==FALSE){
-				returned_article = choose_1(seqnums_needed[i], primary_server);
+				returned_article = choose_1(seqnums_needed[i], primary_server); // choose returns an article with invalid seqnum if it fails
 				if (returned_article->seqnum == seqnums_needed[i]) {
 					// we got the article, so we don't need to contact any more servers
 					//write the article to our local storage
