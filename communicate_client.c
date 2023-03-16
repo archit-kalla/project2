@@ -214,7 +214,7 @@ void cmd_loop() {
 		} else if (strcmp(token, "post") == 0){
 			//bug just get whole text
 
-			char *text = strtok(NULL, " ");
+			char *text = strtok(NULL, "");
 			if (text == NULL) {
 				printf("post failed, no article was provided\n");
 				continue;
@@ -224,7 +224,7 @@ void cmd_loop() {
 			// create article
 			write_1_Article.reply_seqnum = -1;
 			write_1_Article.seqnum = -1;
-			strncpy(write_1_Article.text, (usrBuf+8), 120);   				
+			strncpy(write_1_Article.text, (text), 120);   				
 
 			// post rpc based on mode
 
@@ -277,7 +277,7 @@ void cmd_loop() {
 
 		} else if (strcmp(token, "reply") == 0){
 			char *reply_seqnum_str = strtok(NULL, " ");
-			char *text = strtok(NULL, " ");
+			char *text = strtok(NULL, "");
 
 			if ( (reply_seqnum_str == NULL) || (text == NULL) ) {
 				printf("reply failed, no seqnum was provided, or no text was provided\n");
@@ -288,7 +288,7 @@ void cmd_loop() {
 			// create article
 			write_1_Article.reply_seqnum = atoi(reply_seqnum_str);
 			write_1_Article.seqnum = -1;
-			strncpy(write_1_Article.text, (usrBuf+5), 120);
+			strncpy(write_1_Article.text, (text), 120);
 
 			// post rpc based on mode
 

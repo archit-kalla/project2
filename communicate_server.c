@@ -131,7 +131,7 @@ Article_t articles[NUM_ARTICLES];
 int next_aval_article_slot = 0;
 
 // QUEUE DEFINITIONS
-pthread_mutex_t lock;
+pthread_mutex_t lock; // prevent race condition to access queue
 STAILQ_HEAD(stailhead, article_queue_entry);
 struct stailhead head;
 
@@ -537,6 +537,7 @@ fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 				}
 			}
 			//check rest of the servers
+			//according to local-write this server then becomes the primary so we should send to everyone
 			for (int j = 0; j< num_normal_servers; j++) {
 				if ( (strcmp(servers_info[j].ip, server_ip) == 0) && (strcmp(servers_info[j].port, server_port_str) == 0) ) { // we dont want to contact ourselves
 					continue;
@@ -787,15 +788,6 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		// Also, the client may switch servers, and will call fetch, so that a server can get all of the articles the client wrote.
 		// Thats what Written_seqnums_t from the client is for. client calls fetch_articles_1_svc on joining a server and gives the server the seqnums it wrote. This way the client see their writes.
 		// on a fetch, find a server that has the articles, which may involve contacting multiple servers
-	
-
-		// create a thread to write to the servers
-		// the thread will pop from the queue and write to the servers
-
-		// pthread_t pid;  // THIS NEEDS TO BE MOVED TO a main???
-
-		// pthread_create(&pid, NULL, &read_article_send_queue,NULL);
-
 
 
 		//write to ourselves
@@ -809,7 +801,7 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		next_aval_article_slot++;
 		printf("wrote to self\n");
 
-		//add to the queue
+		//create article_queue_entry
 		article_queue_entry *new_node = malloc(sizeof(article_queue_entry));
 		strncpy(new_node->article.text, Article.text, 120);
 		new_node->article.reply_seqnum = Article.reply_seqnum;
