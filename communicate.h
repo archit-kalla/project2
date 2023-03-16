@@ -21,7 +21,7 @@ struct Article_t {
 };
 typedef struct Article_t Article_t;
 
-//QUEUE DEFINITIONS
+//QUEUE ENTRY DEFINITIONS
 struct article_queue_entry {
 	Article_t article;
 	STAILQ_ENTRY(article_queue_entry) entries;
