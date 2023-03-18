@@ -131,13 +131,14 @@ Article_t articles[NUM_ARTICLES];
 int next_aval_article_slot = 0;
 
 // QUEUE DEFINITIONS
-pthread_mutex_t lock; // prevent race condition to access queue
+// pthread_cond_t condvar = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; // prevent race condition to access queue
 STAILQ_HEAD(stailhead, article_queue_entry);
 struct stailhead head;
 
 // queue reader thread
 void *read_article_send_queue(void* x){
-	while(1){
+	while(1){ // busy wait for queue to have an entry
 		bool_t queue_empty = FALSE;
 		pthread_mutex_lock(&lock);
 		if(STAILQ_EMPTY(&head) == 0){
@@ -559,9 +560,9 @@ fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 					num_acquired++;
 					break;
 				}
-				result = FALSE; // if we get here that means we did not find a result 
-				return &result;
 			}
+			result = FALSE; // if we get here that means we did not find a result 
+			return &result;
 		}
 		result = TRUE; // found all seq nums and wrote them, return true
 	}
