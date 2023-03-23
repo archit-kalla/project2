@@ -84,15 +84,16 @@ CLIENT *setup_connection(char *con_server_ip, char *con_server_port) {
 
 	return clnt;
 }
-
+/*
 void print_page(Page_t page) {
+	//print the first page as long as it exists
 	if (page.articles[0].seqnum != 0)
 		printf("seq: %d, reply seq: %d, text: %-60s\n", page.articles[0].seqnum, page.articles[0].reply_seqnum, page.articles[0].text);
 	
 	//max indent is 9*2 spaces
-	char indent[19] ;
+	char indent[19];
 	
-	// setup indents
+	// setup indents for each possible article (10 in the page)
 	int indentCnt[10];
 	for (int i = 0; i < (sizeof(indentCnt) / sizeof(int)); i++){
 		indentCnt[i] = 0;
@@ -115,21 +116,22 @@ void print_page(Page_t page) {
 			if (cur.seqnum == 0)
 				continue;
 
-			if (cur.seqnum = article.reply_seqnum) {
+			if (cur.seqnum == article.reply_seqnum) {
 				indentCnt[i] = indentCnt[j] + 1;
 				break;
 			}
 		}
 
-		/*
-		for (int i = 0; i < (sizeof(indentCnt) / sizeof(int)); i++){
-			printf("indent at i %d is %d\n", i, indentCnt[i]);
-		}*/
+		
+		// for (int i = 0; i < (sizeof(indentCnt) / sizeof(int)); i++){
+		// 	printf("indent at i %d is %d\n", i, indentCnt[i]);
+		// }
 
 		//setup the indent
 		for (int j = 0; j < sizeof(indent); j++){
 			if (j >= (indentCnt[i] * 2)){
 				indent[j] = '\0';
+				break;
 			} else {
 				indent[j] = ' ';
 			}
@@ -137,6 +139,67 @@ void print_page(Page_t page) {
 		
 		printf("%s", indent);
 		printf("seq: %d, reply seq: %d, text: %-60s\n", article.seqnum, article.reply_seqnum, article.text);
+	}
+}
+*/
+void print_page_recursion(Page_t page, int articleNum, int indentation);
+
+int is_root(Page_t page, int articleNum){
+	Article_t article = page.articles[articleNum];
+	int result = 1;
+	
+	if(article.seqnum != 0 && article.reply_seqnum == 0){
+		return 1;
+	}
+
+	for(int i = 0; i < 10; i++){
+		if(i == articleNum) continue;
+		if(article.reply_seqnum == page.articles[i].seqnum){
+			result = 0;
+			break;
+		}
+	}
+	return result;
+}
+
+void print_page(Page_t page){
+	//if (page.articles[0].seqnum != 0)
+		//printf("seq: %d, reply seq: %d, text: %-60s\n", page.articles[0].seqnum, page.articles[0].reply_seqnum, page.articles[0].text);
+
+	Article_t article;
+
+	for(int i = 0; i < 10; i++){
+		if(is_root(page, i) == 1) // If article is a root
+		{
+			print_page_recursion(page, i, 0);
+		}
+	}
+}
+
+void print_page_recursion(Page_t page, int articleNum, int indentation){
+	Article_t article = page.articles[articleNum];
+
+	//max indent is 9*2 spaces
+	char indent[19];
+
+	// Change indentation how you like.
+	if(indentation > 18){
+		indentation = 18;
+	}
+
+	int j = 0;
+	for (; j < indentation; j++){
+		indent[j] = ' ';
+	}
+	indent[j] = '\0';
+
+	printf("%s", indent);
+	printf("seq: %d, reply seq: %d, text: %-60s\n", article.seqnum, article.reply_seqnum, article.text);
+	
+	for(int i = 0; i < 10; i++){
+		if(page.articles[i].seqnum != 0 && page.articles[i].reply_seqnum == article.seqnum){
+			print_page_recursion(page, i, indentation+2);
+		}
 	}
 }
 
@@ -220,9 +283,8 @@ void cmd_loop() {
 				continue;
 			}
 
-
 			// create article
-			write_1_Article.reply_seqnum = -1;
+			write_1_Article.reply_seqnum = 0;
 			write_1_Article.seqnum = -1;
 			strncpy(write_1_Article.text, (text), 120);   				
 
@@ -386,7 +448,36 @@ void cmd_loop() {
 
 int
 main (int argc, char *argv[])
-{
+{	
+	//testing for print page
+	Page_t test_page;
+	memset((void*)&test_page, 0, sizeof(test_page));
+
+	test_page.articles[0].seqnum = 1;
+	strcpy(test_page.articles[0].text, "test article");
+	
+	test_page.articles[1].seqnum = 2;
+	test_page.articles[1].reply_seqnum = 1;
+	strcpy(test_page.articles[1].text, "test article reply to 1");
+
+	test_page.articles[2].seqnum = 3;
+	test_page.articles[2].reply_seqnum = 2;
+	strcpy(test_page.articles[2].text, "test article reply to 2");
+
+	test_page.articles[5].seqnum = 6;
+	test_page.articles[5].reply_seqnum = 1;
+	strcpy(test_page.articles[5].text, "test article reply to 1");
+
+	test_page.articles[3].seqnum = 4;
+	strcpy(test_page.articles[3].text, "another test article");
+
+	test_page.articles[4].seqnum = 5;
+	test_page.articles[4].reply_seqnum = 4;
+	strcpy(test_page.articles[4].text, "test article reply to 4");
+
+	print_page(test_page);
+	exit(EXIT_SUCCESS);
+
 	// get information about server to which the client should connect too initially,
 	// and get the mode through cmd args
 
