@@ -16,7 +16,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <pthread.h>
 #include <sys/queue.h>
 
 #define NUM_ARTICLES 50
@@ -76,6 +75,23 @@ write_1(Article_t Article, int Nw, char *sender_ip, char *sender_port,  CLIENT *
 	return (&clnt_res);
 }
 
+Page_t *
+read_1(int Page_num, int Nr, CLIENT *clnt)
+{
+	read_1_argument arg;
+	static Page_t clnt_res;
+
+	memset((char *)&clnt_res, 0, sizeof(clnt_res));
+	arg.Page_num = Page_num;
+	arg.Nr = Nr;
+	if (clnt_call (clnt, Read, (xdrproc_t) xdr_read_1_argument, (caddr_t) &arg,
+		(xdrproc_t) xdr_int, (caddr_t) &clnt_res,
+		TIMEOUT) != RPC_SUCCESS) {
+		return (NULL);
+	}
+	return (&clnt_res);
+}
+
 int *
 get_seqnum_1(CLIENT *clnt)
 {
@@ -90,16 +106,21 @@ get_seqnum_1(CLIENT *clnt)
 	return (&clnt_res);
 }
 
-// _________________________________end of rpc call fcns_____________________________
+int*
+highest_seqnum_1(CLIENT *clnt)
+{
+	static int clnt_res;
 
-/*
-called on a timer every 30 seconds
-qourum sync() {
-	for each other server
-	if they have a higher seqnum and seqnums that we don't have in articles, then ask for missing articles using read rpc
+	memset((char *)&clnt_res, 0, sizeof(clnt_res));
+	 if (clnt_call (clnt, Highest_seqnum, (xdrproc_t) xdr_void, (caddr_t) NULL,
+		(xdrproc_t) xdr_int, (caddr_t) &clnt_res,
+		TIMEOUT) != RPC_SUCCESS) {
+		return (NULL);
+	}
+	return (&clnt_res);
 }
 
-*/
+// _________________________________end of rpc call fcns_____________________________
 
 // state for the server
 
@@ -182,6 +203,63 @@ void *read_article_send_queue(void* x){
 			}
 			
 		}
+	}
+
+}
+
+//called on a timer every 60 seconds
+void* quorum_sync() {
+	//for each other server
+	//if they have a higher seqnum and seqnums that we don't have in articles, then ask for missing articles using choose
+	while(1){
+		sleep(60);
+
+		// Finds how many articles are there in total
+		int primary_seqnum;
+		int* highest = highest_seqnum_1(primary_server);
+		if(highest != NULL){
+			primary_seqnum = *highest;
+		}
+		else{
+			primary_seqnum = highest_seqnum;
+		}
+		
+
+
+		// Checks which articles this server needs.
+		bool_t seqnums_needed[primary_seqnum];
+		for(int i = 0; i < primary_seqnum; i++){
+			seqnums_needed[i] = TRUE;
+
+			for(int j = 0; j < primary_seqnum; j++){
+				if(&articles[j] != (Article_t *) NULL && articles[j].seqnum == i){
+					seqnums_needed[i] = FALSE;
+					break;
+				}
+			}
+		}
+
+		Article_t article;
+		int server_seqnum;
+
+		// Finds articles the server needs
+		for(int i = 0; i < primary_seqnum; i++){
+			if(next_aval_article_slot < NUM_ARTICLES && seqnums_needed[i]){
+				for(int j = 0; j < num_normal_servers; j++){
+					article = *choose_1(i, servers[j]);
+					if(&article != (Article_t *) NULL && article.seqnum == i){
+						// write the article
+						strncpy(articles[next_aval_article_slot].text, article.text, 120);
+						articles[next_aval_article_slot].reply_seqnum = article.reply_seqnum;
+						articles[next_aval_article_slot].seqnum = article.seqnum;
+
+						next_aval_article_slot++;
+					}
+				}
+			}
+		}
+		highest_seqnum = primary_seqnum;
+
 	}
 
 }
@@ -415,6 +493,10 @@ void initialize(char *_server_ip, char *_server_port_str, char *_mode) {
         exit(EXIT_FAILURE);
     }
 
+	if(strcmp(mode, "quorum")){
+		pthread_t sync_thread_id;
+		pthread_create(&sync_thread_id, NULL, &quorum_sync, NULL);
+	}
 
 }
 
@@ -469,8 +551,7 @@ read_1_svc(int Page_num, int Nr, struct svc_req *rqstp)
 
 	} else { // mode is quorum
 
-		// Does this even need to be the primary?
-		if (amPrimary == TRUE) {
+		if(amPrimary == TRUE){
 			printf("contacting nR servers\n");
 
 			// we only have 5 pages for 50 articles
@@ -586,15 +667,12 @@ read_1_svc(int Page_num, int Nr, struct svc_req *rqstp)
 			// have the primary not contact us based on ip and port str, shown in 630, since we will be blocked on the write
 			// also if Nw is num of all servers, then this server must write to itself like in 686 after the write, and only return true if both the primary and ourselves could write
 
-			result = read_1_svc(Page_num, Nr, primary_server);
+			result = read_1(Page_num, Nr, primary_server);
 
 			if (result == (Page_t *) NULL) {
 				clnt_perror (primary_server, "call failed");
-				return result;
-			} else {
-				return result;
-
 			}
+			return result;
 		}
 
 	} // end of read for a qourum
