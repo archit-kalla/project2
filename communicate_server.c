@@ -157,6 +157,16 @@ pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; // prevent race condition to a
 STAILQ_HEAD(stailhead, article_queue_entry);
 struct stailhead head;
 
+// debug, see all articles:
+void print_articles() {
+	for (int i = 0; i < NUM_ARTICLES; i++) {
+		if (articles[i].seqnum != 0)
+			printf("seq: %d, reply seq: %d, text: %-60s\n", articles[i].seqnum, articles[i].reply_seqnum, articles[i].text);
+	}
+
+	return;
+}
+
 // queue reader thread
 void *read_article_send_queue(void* x){
 	while(1){ // busy wait for queue to have an entry
@@ -209,6 +219,7 @@ void *read_article_send_queue(void* x){
 
 //called on a timer every 60 seconds
 void* quorum_sync() {
+	/*
 	//for each other server
 	//if they have a higher seqnum and seqnums that we don't have in articles, then ask for missing articles using choose
 	while(1){
@@ -261,7 +272,7 @@ void* quorum_sync() {
 		highest_seqnum = primary_seqnum;
 
 	}
-
+	*/
 }
 
 // setup the rpc connection object:
@@ -514,21 +525,20 @@ ping_1_svc(struct svc_req *rqstp)
 	return &result;
 }
 
+// fcn declaration
+Article_t *get_article(int Seqnum);
+
 Page_t *
 read_1_svc(int Page_num, int Nr, struct svc_req *rqstp)
 {	
-	/* for testing purposes
-	strcpy(articles[0].text, "top level");
-	articles[0].seqnum = 1;
-	articles[0].reply_seqnum = -1;
-	
-	strcpy(articles[1].text, "a reply");
-	articles[1].seqnum = 2;
-	articles[1].reply_seqnum = 1;
-	*/
-	static Page_t *result;
 
-	if (mode != "quorum") {
+	static Page_t page;
+	memset(&page, 0, sizeof(page));
+	static Page_t *result;
+	result = &page;
+	Article_t  *result_9;
+
+	if (strcmp(mode, "quorum") != 0) {
 
 		printf("a client read 10 articles from page %d\n", Page_num);
 
@@ -551,129 +561,229 @@ read_1_svc(int Page_num, int Nr, struct svc_req *rqstp)
 
 	} else { // mode is quorum
 
-		if(amPrimary == TRUE){
-			printf("contacting nR servers\n");
+		// we only have 5 pages for 50 articles
+		if (Page_num > 5) {
+			Page_num = 5;
+		} else if (Page_num < 1) {
+			Page_num = 1;
+		}
 
-			// we only have 5 pages for 50 articles
-			if (Page_num > 5) {
-				Page_num = 5;
-			} else if (Page_num < 1) {
-				Page_num = 1;
+		// convert page num to have the first page be page 0
+		Page_num--;
+
+		// get the page num and associated seqnums
+		// 10 articles per page
+		int needed_seqnums[10];
+		for (int i = 0; i < 10; i++) {
+			needed_seqnums[i] = i + (Page_num*10) + 1;
+		}
+
+		memset(result, 0, sizeof(*result));
+
+		// do Nr reads for each article in the page, since the article type is what our consistency is based on
+		for (int i = 0; i < 10; i++) {
+			int cur_Nr = Nr;
+			int needed_seqnum = needed_seqnums[i];
+			
+			// a normal server asks the primary to contact Nw servers, based on the Nw the client asked for.
+			// so similarily to before, a normal server forwards this rpc call from the client, by making this rpc call to the server
+			// to make this happen we have two cases primary or not primary as before. 
+			// in a qourum, each server has a timer interupt, which causes it to contact other servers and ask for missing articles. It can know if it has missing articles
+			// by asking for the highest seqnum at the server using get_seqnum. and it can request missing articles using choose. All of this is done by using the rpc object at servers[i].
+			// choose is only done by server-server rpcs, to get an article with a specific seqnum.
+			// A client requests pages and it can choose from the page. 
+			// contact Nr normal servers with the article
+			// from our servers objects, we want to pick Nr amount of them and server_write to them, but we don't want to pick the same one twice
+			// so we save that in contacted_nums of servers
+
+			// contact ourselves
+
+			Article_t *cur = NULL;
+			cur = get_article(needed_seqnum);
+			
+			if (cur->seqnum != -1) {
+				result->articles[i] = *cur;
+				continue;
+			} 
+			cur_Nr--;
+
+			if (cur_Nr == 0) {
+				continue;
 			}
 
-			// convert page num to have the first page be page 0
-			Page_num--;
+			// try to contact primary
 
-			// get the page num and associated seqnums
-			// 10 articles per page
-			int needed_seqnums[10];
-
-			for (int i = 0; i < 10; i++) {
-				needed_seqnums[i] = i + (Page_num*10);
+			if (amPrimary == FALSE) {
+				result_9 = choose_1(needed_seqnum, primary_server);
+				if (result_9 == (Article_t *) NULL) {
+					clnt_perror (primary_server, "call failed");
+				} else if (result_9->seqnum != -1){
+					result->articles[i] = *cur;
+					continue;
+				} else {
+					cur_Nr--;
+				}
+			}
+			
+			if (cur_Nr == 0) {
+				continue;
 			}
 
-			Page_t *Nr_page;
-			memset(Nr_page, 0, sizeof(&Nr_page));
+			// we already contacted ourselves and primary (Nr = Nr-2 if we and the primary are different)
+			printf("contacting remote servers to get article\n");
 
-			// do Nr reads for each article in the page, since the article type is what our consistency is based on
-			for (int i = 0; i < 10; i++) {
-				int needed_seqnum = needed_seqnums[i];
 				
-				// a normal server asks the primary to contact Nw servers, based on the Nw the client asked for.
-				// so similarily to before, a normal server forwards this rpc call from the client, by making this rpc call to the server
-				// to make this happen we have two cases primary or not primary as before. 
+			int contacted_nums[cur_Nr];
+			//memset(contacted_nums, -1, sizeof(contacted_nums));
+			int servers_left = cur_Nr;
+			int contacted_nums_aval_slot = 0;
+			int server_to_contact;
+			int random_num;
+			int f = 0;
+			int failed_servers_num = 0;
+			int server_nums[num_normal_servers];
+			int failed_servers[num_normal_servers];
 
-				// in a qourum, each server has a timer interupt, which causes it to contact other servers and ask for missing articles. It can know if it has missing articles
-				// by asking for the highest seqnum at the server using get_seqnum. and it can request missing articles using choose. All of this is done by using the rpc object at servers[i].
-				// choose is only done by server-server rpcs, to get an article with a specific seqnum.
-				// A client requests pages and it can choose from the page. 
-
-				// contact Nr normal servers with the article
-
-				// from our servers objects, we want to pick Nr amount of them and server_write to them, but we don't want to pick the same one twice
-				// so we save that in contacted_nums of servers
-
-				int contacted_nums[Nr];
-				memset(contacted_nums, -1, sizeof(contacted_nums));
-				int contacted_nums_aval_slot = 0;
-				int servers_left = Nr;
-				int server_to_contact;
-				int random_num;
-				int f = 0;
-				int failed_servers_num = 0;
-
-				int server_nums[num_normal_servers];
-				int failed_servers[num_normal_servers];
-
-				// Create list of servers to contact
-				for(int i = 0; i < num_normal_servers; i++){
-					server_nums[i] = i;
-				}
-
-				while(servers_left > 0 && f < num_normal_servers){
-					// Get random server to contact
-					random_num = (rand() % num_normal_servers-f);
-					server_to_contact = server_nums[random_num];
-					f++;
-					// Remove the random server from available servers.
-					for(int i = random_num; i < num_normal_servers - f; i++){
-						server_nums[i] = server_nums[i+1];
-					}
-
-					struct svc_req *rqstp;
-
-					Article_t *result_9;
-
-					//contact the server we picked randomly
-					result_9 = choose_1(needed_seqnum, servers[server_to_contact]);
-
-					if (result_9 == (Article_t *) NULL) {
-						clnt_perror (servers[server_to_contact], "call failed");
-						failed_servers[failed_servers_num] = server_to_contact;
-						failed_servers_num++;
-					}
-					else{
-						contacted_nums[contacted_nums_aval_slot] = server_to_contact;
-
-						// success case, save the article
-						Nr_page->articles[i] = *result_9;
-
-						servers_left--;
-						contacted_nums_aval_slot++;
-
-						printf("Contacted %d servers\n", f-failed_servers_num);
-						if(failed_servers_num > 0){
-							printf("Failed to contact %d servers\nFailed servers:\n", failed_servers_num);
-						}
-						for(int i = 0; i < failed_servers_num; i++){
-							printf("\t%s", servers_info[failed_servers[i]].ip);
-						}
-
-						break; // Does the server need to contact any more servers?
-					}
-				}
-			} // end of for loop, primary has either contacted enough servers or failed to contact enough servers.
-					
-			result = Nr_page;
-
-			return result;
-		}
-		else{
-			// case of a qourum read where this isn't the primary, so forward this read via an rpc to the primary
-
-			printf("contacting primary\n");
-			// ask primary to contact Nw servers
-
-			// have the primary not contact us based on ip and port str, shown in 630, since we will be blocked on the write
-			// also if Nw is num of all servers, then this server must write to itself like in 686 after the write, and only return true if both the primary and ourselves could write
-
-			result = read_1(Page_num, Nr, primary_server);
-
-			if (result == (Page_t *) NULL) {
-				clnt_perror (primary_server, "call failed");
+			// Create list of servers to contact
+			for(int i = 0; i < num_normal_servers; i++){
+				server_nums[i] = i;
 			}
-			return result;
-		}
+
+			while( !(servers_left == 0 || f == num_normal_servers) ){
+				// Get random server to contact
+				random_num = (rand() % (num_normal_servers-f));
+				server_to_contact = server_nums[random_num];
+				f++;
+				// Remove the random server from available servers.
+				for(int i = random_num; i < num_normal_servers - f; i++){
+					server_nums[i] = server_nums[i+1];
+				}
+
+				if((strcmp(servers_info[server_to_contact].ip, server_ip) == 0) && (strncmp(servers_info[server_to_contact].port, server_port_str, 4) == 0) ) {
+					//printf("Not contacting a server\n");
+					//failed_servers[failed_servers_num] = server_to_contact;
+					//failed_servers_num++;
+					continue;
+				}
+
+				//contact the server we picked randomly
+
+				result_9 = choose_1(needed_seqnum, servers[server_to_contact]);
+				if (result_9 == (Article_t *) NULL) {
+					//clnt_perror (servers[server_to_contact], "call failed");
+					failed_servers[failed_servers_num] = server_to_contact;
+					failed_servers_num++;
+				}
+				else{
+					contacted_nums[contacted_nums_aval_slot] = server_to_contact;
+					// success case, save the article
+					result->articles[i] = *result_9;
+					servers_left--;
+					contacted_nums_aval_slot++;
+					printf("Contacted %d servers\n", f-failed_servers_num);
+					if(failed_servers_num > 0){
+						printf("Failed to contact %d servers\nFailed servers:\n", failed_servers_num);
+					}
+					for(int i = 0; i < failed_servers_num; i++){
+						printf("\t%s", servers_info[failed_servers[i]].ip);
+					}
+					break; // Does the server need to contact any more servers?
+				}
+			}
+			/*
+			while( !(servers_left == 0 || f == num_normal_servers) ){
+				// Get random server to contact
+				random_num = (rand() % (num_normal_servers-f));
+				server_to_contact = server_nums[random_num];
+				//printf("%d %s %s\n", server_to_contact, servers_info[server_to_contact].ip, servers_info[server_to_contact].port);
+				f++;
+				// Remove the random server from available servers.
+				//printf("%d %d %d\n", random_num, num_normal_servers, f);
+				for(int i = random_num; i < num_normal_servers - f; i++){
+					printf("i == %d\n", i);
+					server_nums[i] = server_nums[i+1];
+				}
+				//printf("Contacting servers now\n");
+				//contact the server we picked randomly
+				//printf("contacting server: %s %s sender server: %s %s\n", servers_info[server_to_contact].ip, servers_info[server_to_contact].port, sender_ip, sender_port);
+				if((strcmp(servers_info[server_to_contact].ip, sender_ip) == 0) && (strncmp(servers_info[server_to_contact].port, sender_port, strlen(sender_port)) == 0) ) {
+					//printf("Not contacting a server\n");
+					//failed_servers[failed_servers_num] = server_to_contact;
+					//failed_servers_num++;
+					continue;
+				}
+				// primary server isn't in servers, so it's not contacted
+				else{
+					printf("Contacting a server at ip: %s port: %s \n", servers_info[server_to_contact].ip, servers_info[server_to_contact].port);
+					result_7 = server_write_1(Article, servers[server_to_contact]);	
+				}
+				// a similar primary and non primary structure should happen on a read, where the server forwards the read to the primary, and the primary reads from Nr servers 
+				// return -1 to signify failure and allow the server to keep the article or allow it to be lost
+				// the client should not expect that this article write has been applied
+				if (result_7 == (bool_t *) NULL) {
+					clnt_perror (servers[server_to_contact], "call failed");
+					failed_servers[failed_servers_num] = server_to_contact;
+					failed_servers_num++;
+				}
+				else{
+					contacted_nums[contacted_nums_aval_slot] = server_to_contact;
+					servers_left--;
+					contacted_nums_aval_slot++;
+				}
+			}*/
+			// end of
+
+			/*
+			int contacted_nums[Nr];
+			memset(contacted_nums, -1, sizeof(contacted_nums));
+			int contacted_nums_aval_slot = 0;
+			int servers_left = Nr-1;
+			int server_to_contact;
+			int random_num;
+			int f = 0;
+			int failed_servers_num = 0;
+			int server_nums[num_normal_servers];
+			int failed_servers[num_normal_servers];
+			// Create list of servers to contact
+			for(int i = 0; i < num_normal_servers; i++){
+				server_nums[i] = i;
+			}
+			while(servers_left > 0 && f < num_normal_servers){
+				// Get random server to contact
+				random_num = (rand() % (num_normal_servers-f));
+				server_to_contact = server_nums[random_num];
+				f++;
+				// Remove the random server from available servers.
+				for(int i = random_num; i < num_normal_servers - f; i++){
+					server_nums[i] = server_nums[i+1];
+				}
+				Article_t *result_9;
+				//contact the server we picked randomly
+				result_9 = choose_1(needed_seqnum, servers[server_to_contact]);
+				if (result_9 == (Article_t *) NULL) {
+					clnt_perror (servers[server_to_contact], "call failed");
+					failed_servers[failed_servers_num] = server_to_contact;
+					failed_servers_num++;
+				}
+				else{
+					contacted_nums[contacted_nums_aval_slot] = server_to_contact;
+					// success case, save the article
+					Nr_page->articles[i] = *result_9;
+					servers_left--;
+					contacted_nums_aval_slot++;
+					printf("Contacted %d servers\n", f-failed_servers_num);
+					if(failed_servers_num > 0){
+						printf("Failed to contact %d servers\nFailed servers:\n", failed_servers_num);
+					}
+					for(int i = 0; i < failed_servers_num; i++){
+						printf("\t%s", servers_info[failed_servers[i]].ip);
+					}
+					break; // Does the server need to contact any more servers?
+				}
+			}*/
+		
+		} // end of for loop, primary has either contacted enough servers or failed to contact enough servers.
+		return result;
 
 	} // end of read for a qourum
 
@@ -932,7 +1042,6 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		
 
 		if (amPrimary == TRUE) {
-			printf("contacting nW servers\n");
 			
 			// contact Nw normal servers with the article
 			
@@ -940,7 +1049,7 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 			// so we save that in contacted_nums of servers
 
 			int contacted_nums[Nw];
-			memset(contacted_nums, -1, sizeof(contacted_nums));
+			//memset(contacted_nums, -1, sizeof(contacted_nums));
 			int contacted_nums_aval_slot = 0;
 			int servers_left = Nw;
 			int server_to_contact;
@@ -951,29 +1060,55 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 			int server_nums[num_normal_servers];
 			int failed_servers[num_normal_servers];
 			
+			// we need to be able to handle the case where Nw is N, so write to ourselves
+			// note the recieve Nw is either Nw from the client or Nw-1 from a different server that the client contacted
+
+			strncpy(articles[next_aval_article_slot].text, Article.text, 120);
+			articles[next_aval_article_slot].reply_seqnum = Article.reply_seqnum;
+			articles[next_aval_article_slot].seqnum = Article.seqnum;
+			next_aval_article_slot++;
+
+			servers_left--;
+
 			// Create list of servers to contact
 			for(int i = 0; i < num_normal_servers; i++){
 				server_nums[i] = i;
 			}
 
-			while(servers_left > 0 && f < num_normal_servers){
+			
+			printf("contacting given nW-1 servers\n");
+
+			while( !(servers_left == 0 || f == num_normal_servers) ){
+				
 				// Get random server to contact
-				random_num = (rand() % num_normal_servers-f);
+
+				random_num = (rand() % (num_normal_servers-f));
 				server_to_contact = server_nums[random_num];
+				//printf("%d %s %s\n", server_to_contact, servers_info[server_to_contact].ip, servers_info[server_to_contact].port);
 				f++;
 				// Remove the random server from available servers.
+				//printf("%d %d %d\n", random_num, num_normal_servers, f);
+				
+
 				for(int i = random_num; i < num_normal_servers - f; i++){
+					printf("i == %d\n", i);
 					server_nums[i] = server_nums[i+1];
 				}
 
-				struct svc_req *rqstp;
 
+				//printf("Contacting servers now\n");
 				//contact the server we picked randomly
-				if((strcmp(servers_info[server_to_contact].ip, sender_ip) == 0) && (strncmp(servers_info[server_to_contact].port, sender_port, (strlen(sender_port)-1)) == 0) ) {
-					*result_7 = -1;
+				//printf("contacting server: %s %s sender server: %s %s\n", servers_info[server_to_contact].ip, servers_info[server_to_contact].port, sender_ip, sender_port);
+
+				if((strcmp(servers_info[server_to_contact].ip, sender_ip) == 0) && (strncmp(servers_info[server_to_contact].port, sender_port, strlen(sender_port)) == 0) ) {
+					//printf("Not contacting a server\n");
+					//failed_servers[failed_servers_num] = server_to_contact;
+					//failed_servers_num++;
+					continue;
 				}
-				// Put something to not contact primary server (this server) here.
+				// primary server isn't in servers, so it's not contacted
 				else{
+					printf("Contacting a server at ip: %s port: %s \n", servers_info[server_to_contact].ip, servers_info[server_to_contact].port);
 					result_7 = server_write_1(Article, servers[server_to_contact]);	
 				}
 
@@ -986,15 +1121,12 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 					failed_servers[failed_servers_num] = server_to_contact;
 					failed_servers_num++;
 				}
-				else if(*result_7 == -1){
-					failed_servers[failed_servers_num] = server_to_contact;
-					failed_servers_num++;
-				}
 				else{
 					contacted_nums[contacted_nums_aval_slot] = server_to_contact;
 					servers_left--;
 					contacted_nums_aval_slot++;
 				}
+				//printf("New loop, servers_left: %d\n", servers_left);
 			} // end of for loop, primary has either contacted Nw servers or failed to contact enough servers.
 			
 			printf("Contacted %d servers\n", f-failed_servers_num);
@@ -1002,15 +1134,15 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 				printf("Failed to contact %d servers\nFailed servers:\n", failed_servers_num);
 			}
 			for(int i = 0; i < failed_servers_num; i++){
-				printf("\t%s", servers_info[failed_servers[i]].ip);
+				printf("%s %s\n", servers_info[failed_servers[i]].ip, servers_info[failed_servers[i]].port);
 			}
 
 			// Failed to write to Nw servers. May have written to some servers.
 			if(servers_left > 0){
-				result = FALSE;
+				result = -1;
 			}
 			else{
-				result = TRUE;
+				result = 1;
 			}
 
 			return &result;
@@ -1018,12 +1150,25 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 		} else {
 			// case of a qourum write where this isn't the primary, so forward this write via an rpc to the primary
 
+			// We write to ourselves to handle the case of Nw == N
+			
+			strncpy(articles[next_aval_article_slot].text, Article.text, 120);
+			articles[next_aval_article_slot].reply_seqnum = Article.reply_seqnum;
+			articles[next_aval_article_slot].seqnum = Article.seqnum;
+			next_aval_article_slot++;
+
+			printf("Nw : %d\n", Nw);
+			Nw--;
+			// check for case where Nw was 1
+			if (Nw <= 0) {
+				result = Article.seqnum;
+				return &result;
+			}
+
+			// ask primary to contact Nw-1 servers
 			printf("contacting primary\n");
-			// ask primary to contact Nw servers
 
 			// have the primary not contact us based on ip and port str, shown in 630, since we will be blocked on the write
-			// also if Nw is num of all servers, then this server must write to itself like in 686 after the write, and only return true if both the primary and ourselves could write
-
 			result_5 = write_1(Article, Nw, server_ip, server_port_str, primary_server);
 
 			if (result_5 == (int *) NULL) {
@@ -1163,6 +1308,46 @@ highest_seqnum_1_svc(struct svc_req *rqstp)
 // use for qourum sync, or local write fetch, to get a article with a specific seqnum from a server
 Article_t *
 choose_1_svc(int Seqnum,  struct svc_req *rqstp)
+{
+	static Article_t  result;
+
+	// find the article:
+
+	bool_t found = FALSE;
+
+	for (int i = 0; i < NUM_ARTICLES; i++) {
+		Article_t cur = articles[i];
+		
+		if (cur.seqnum == Seqnum) {
+			
+			//fill in the result article
+			strncpy(result.text, cur.text, 120);
+			result.reply_seqnum = cur.reply_seqnum;
+			result.seqnum = cur.seqnum;
+
+			found = TRUE;
+			break;
+		}
+	}
+
+	// check if article wasn't found
+	if (found == FALSE) {
+		// fill in the the invalid result article
+
+		char empty_text[120];
+		memset(empty_text, 0, 120);
+
+		strncpy(result.text, empty_text, 120);
+		result.reply_seqnum = -1;
+		result.seqnum = -1;
+
+	}
+
+	return &result;
+}
+
+Article_t *
+get_article(int Seqnum)
 {
 	static Article_t  result;
 

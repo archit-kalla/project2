@@ -72,7 +72,7 @@ CLIENT *setup_connection(char *con_server_ip, char *con_server_port) {
 	//setup the timeout for rpc calls
 	struct timeval wait;
 	memset(&wait, 0, sizeof(wait));
-	wait.tv_sec = 2;
+	wait.tv_sec = 10;
 
 	// create the object
 	CLIENT *clnt = clntudp_create (&servaddr, COMMUNICATE, COMMUNICATE_VERSION, wait, &sockfd);
@@ -449,6 +449,7 @@ int
 main (int argc, char *argv[])
 {	
 	//testing for print page
+	/*
 	Page_t test_page;
 	memset((void*)&test_page, 0, sizeof(test_page));
 
@@ -476,6 +477,7 @@ main (int argc, char *argv[])
 
 	print_page(test_page);
 	exit(EXIT_SUCCESS);
+	*/
 
 	// get information about server to which the client should connect too initially,
 	// and get the mode through cmd args

@@ -1,0 +1,7 @@
+Pledge: your team will sign a pledge that no one sought out any on-line solutions, e.g. github, for 
+portions of this lab.
+
+Signed by:
+
+Nicholas Starinets
+Trey Taylor
