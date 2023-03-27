@@ -1,6 +1,7 @@
 Group Members:
 Nicholas Starinets, stari219@umn.edu, 5599802 - worked on primary backup, client cmd interface, and rpc C setup
 Trey Taylor, tayl1931@umn.edu, 5546464 - worked on quorums
+Archit Kalla, kalla100@umn.edu 5582245 - implement local-write and fetch
 
 
 Compilation:
