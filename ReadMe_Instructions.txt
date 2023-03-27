@@ -72,7 +72,9 @@ In quorum mode all of the servers do not run in unison and do not have to all be
 When writing to Nw servers, the server which the client contacts writes to itself first then tells the primary server to write to Nw-1 servers. Primary server writes to itself 
 and then it attempts to write to Nw-2 servers which are randomly chosen (does not include the originally called server or primary). When reading a 
 page (a set of 10 sequential articles) from Nr servers, the contacted server first checks to see if it has the article. If not, it then starts contacting servers, starting with the primary and after that random servers, up to Nr-1 times until it obtains the needed article. This repeats for a whole page. quorum_sync makes sure all the servers have all articles after a specified amount of time.
-It first checks which sequence numbers the server has, and then afterwards attempts to get those articles from a server.
+It first checks which sequence numbers the server has, and then afterwards attempts to get those articles from a server. 
+Notes: There may potentially be a race condition with quorum_sync and quorum writing. Ports should be of character length 4.
+Additionally, quorum_sync may cause some seg faults or other problems. For now it is commented out at lines 535-536. If it is wished to be tested, uncomment it out.
 
 In local write mode all of the servers must be up and working. The primary tag must be present although functionally is not too relevant. The primary servers main job is to assign new seqnums to articles or replies.
 Outside of this function, the traditional "primary" server is the server that is currently being written to by a client. The client keeps track of the seqnums that it has written. Upon connecting to a new server the the client will call fetch to that server with its own written sequnums.
@@ -136,3 +138,31 @@ Test Setup: One primary is set up and backupa are also set up. Client is connect
             and also reads these articles on page 1.
 Expected State Change: The written to server has the written articles to itself and the primary, In addition, on connection to new client fetch is called and finds seqnums if not on current server.
 Actual State Change: Success
+
+Tests for quorum mode:
+
+General Setup:
+First, servers.txt should include 5 lines, which are "127.0.0.1 <5001-5005>". After 5005 you also put "primary"
+Second, 5 servers are ran via "./communicate_server 127.0.0.1 <5001-5005> quorum"
+Third, 5 clients are ran via "./communicate_client 127.0.0.1 <5001-5005> quorum 3 3"
+
+Test Case 1: Writing
+Test Setup: General Setup. Afterwards, type into a client "post <message>"
+Expected State Change: The article should be saved into the server, the primary server, and one other random server
+Actual State Change: Success
+
+Test Case 2: Reading a write from the same server
+Test Setup: Test case 1. In the same client type "read 1"
+Expected State Change: Test case 1 state change. Output to client the article.
+Actual State Change: Success
+
+Test Case 3: Reading a write from a different server
+Test Setup: Test case 1. In a different client type "read 1"
+Expected State Change: Test case 1 state change. Output to client the article.
+Actual State Change: Success
+
+Test Case 4: Reading three writes from a different server
+Test Setup: General setup. In three different clients, type "post <message>". In another different client, type "read 1".
+Expected State Change: Three a articles should be saved into the server, the primary server, and one other random server. The client should see three different articles.
+Actual State Change: Success
+

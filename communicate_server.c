@@ -278,7 +278,7 @@ void* quorum_sync() {
 		for(int i = 0; i < primary_seqnum; i++){
 			if(next_aval_article_slot < NUM_ARTICLES && seqnums_needed[i]){
 				for(int j = 0; j < num_normal_servers; j++){
-					if(strcmp("", servers_info[j].ip) != 0 && strncmp("", servers_info[j].port, 4) != 0){
+					if(((strcmp(servers_info[j].ip, "") == 0) || (strcmp(servers_info[j].ip, server_ip) == 0)) && ((strncmp(servers_info[j].port, "", 4) == 0) || (strncmp(servers_info[j].port, server_port_str, 4) == 0)) ){
 						//Taking an article
 						article = *choose_1(i+1, servers[j]);
 						if(article.seqnum == (i+1)){
@@ -289,6 +289,7 @@ void* quorum_sync() {
 
 							next_aval_article_slot++;
 							seqnums_needed[i] = FALSE;
+							break;
 						}
 					}
 				}
@@ -531,8 +532,8 @@ void initialize(char *_server_ip, char *_server_port_str, char *_mode) {
     }
 
 	if(strcmp(mode, "quorum") == 0){
-		pthread_t sync_thread_id;
-		pthread_create(&sync_thread_id, NULL, &quorum_sync, NULL);
+		//pthread_t sync_thread_id;
+		//pthread_create(&sync_thread_id, NULL, &quorum_sync, NULL);
 	}
 
 }
@@ -644,7 +645,7 @@ read_1_svc(int Page_num, int Nr, struct svc_req *rqstp)
 				if (result_9 == (Article_t *) NULL) {
 					clnt_perror (primary_server, "call failed");
 				} else if (result_9->seqnum != -1){
-					result->articles[i] = *cur;
+					result->articles[i] = *result_9;
 					continue;
 				} else {
 					cur_Nr--;
@@ -685,7 +686,7 @@ read_1_svc(int Page_num, int Nr, struct svc_req *rqstp)
 					server_nums[i] = server_nums[i+1];
 				}
 
-				if((strcmp(servers_info[server_to_contact].ip, server_ip) == 0) && (strncmp(servers_info[server_to_contact].port, server_port_str, 4) == 0) ) {
+				if(((strcmp(servers_info[server_to_contact].ip, "") == 0) || (strcmp(servers_info[server_to_contact].ip, server_ip) == 0)) && ((strncmp(servers_info[server_to_contact].port, "", 4) == 0) || (strncmp(servers_info[server_to_contact].port, server_port_str, 4) == 0)) ) {
 					//printf("Not contacting a server\n");
 					//failed_servers[failed_servers_num] = server_to_contact;
 					//failed_servers_num++;
@@ -1035,7 +1036,7 @@ write_1_svc(Article_t Article, int Nw, char *sender_ip, char *sender_port,  stru
 				//contact the server we picked randomly
 				//printf("contacting server: %s %s sender server: %s %s\n", servers_info[server_to_contact].ip, servers_info[server_to_contact].port, sender_ip, sender_port);
 
-				if((strcmp(servers_info[server_to_contact].ip, sender_ip) == 0) && (strncmp(servers_info[server_to_contact].port, sender_port, strlen(sender_port)) == 0) ) {
+				if(((strcmp(servers_info[server_to_contact].ip, "") == 0) || (strcmp(servers_info[server_to_contact].ip, server_ip) == 0)) && ((strncmp(servers_info[server_to_contact].port, "", 4) == 0) || (strncmp(servers_info[server_to_contact].port, server_port_str, 4) == 0)) ) {
 					//printf("Not contacting a server\n");
 					//failed_servers[failed_servers_num] = server_to_contact;
 					//failed_servers_num++;
