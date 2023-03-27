@@ -70,7 +70,8 @@ saying is that the primary write rpc implementation serializes the order in whic
 In quorum mode all of the servers do not run in unison and do not have to all be available to work completely, though the primary server should always be available.
 When writing to Nw servers, the server which the client contacts writes to itself first then tells the primary server to write to Nw-1 servers. Primary server writes to itself 
 and then it attempts to write to Nw-2 servers which are randomly chosen (does not include the originally called server or primary). When reading a 
-page (a set of 10 sequential articles) from Nr servers, the contacted server first checks to see if it has the article. If not, it then starts contacting servers, starting with the primary and after that random servers, up to Nr-1 times until it obtains the needed article. This repeats for a whole page. 
+page (a set of 10 sequential articles) from Nr servers, the contacted server first checks to see if it has the article. If not, it then starts contacting servers, starting with the primary and after that random servers, up to Nr-1 times until it obtains the needed article. This repeats for a whole page. quorum_sync makes sure all the servers have all articles after a specified amount of time.
+It first checks which sequence numbers the server has, and then afterwards attempts to get those articles from a server.
 
 
 
