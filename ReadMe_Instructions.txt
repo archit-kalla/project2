@@ -73,6 +73,11 @@ and then it attempts to write to Nw-2 servers which are randomly chosen (does no
 page (a set of 10 sequential articles) from Nr servers, the contacted server first checks to see if it has the article. If not, it then starts contacting servers, starting with the primary and after that random servers, up to Nr-1 times until it obtains the needed article. This repeats for a whole page. quorum_sync makes sure all the servers have all articles after a specified amount of time.
 It first checks which sequence numbers the server has, and then afterwards attempts to get those articles from a server.
 
+In local write mode all of the servers must be up and working. The primary tag must be present although functionally is not too relevant. The primary servers main job is to assign new seqnums to articles or replies.
+Outside of this function, the traditional "primary" server is the server that is currently being written to by a client. The client keeps track of the seqnums that it has written. Upon connecting to a new server the the client will call fetch to that server with its own written sequnums.
+If the server does not have certain articles or replies, it will fetch from all the servers until the article it is looking for is found. In this implementation, we implement the literal definition of "read - your - writes" as other writes are not fetched on client change, only ones that are present on the new connected client.
+Each server has a thread that is dedicated to "lazily" writing messages to other servers much like a primary does in primary back up method.
+
 
 
 Test Cases:
@@ -100,4 +105,33 @@ Test Setup: The servers are set up. Client one is connected to the primary. Clie
 Expected State Change: Both of the clients do a read and see each other's articles. This means that the articles
                        were propagated successfully. Also, the article written first must have a sequence number of
                        1 and the article written next must have a sequence number of 2.
+Actual State Change: Success
+
+
+Tests for local-write mode:
+
+First, the mode on all of the servers and all of the clients must be local-write.
+
+Test Case: Write to "primary" server (NOTE: primary keyword in this mode is just a neccesity for code to work properly)
+Test Setup: One primary is set up and One client is connected to it. A backup is also set up. 
+            Then, the client writes articles "hi", "test", "bye, which is a reply to article 2",
+            and then reads them back from the primary. Next, the client connects to the backup server
+            and also reads these articles on page 1.
+Expected State Change: The primary has the written articles to itself and the backup, and both servers retrieve them for the client on reads.
+Actual State Change: Success
+
+Test Case: Write to backup server 
+Test Setup: One primary is set up and A backup is also set up. Client is connected to backup (non-primary) 
+            Then, the client writes articles "hi", "test", "bye, which is a reply to article 2",
+            and then reads them back from the backup. Next, the client connects to the primary server
+            and also reads these articles on page 1.
+Expected State Change: The backup has the written articles to itself and the primary, and both servers retrieve them for the client on reads.
+Actual State Change: Success
+
+Test Case: Write to any server and read from another
+Test Setup: One primary is set up and backupa are also set up. Client is connected to any server.
+            Then, the client writes articles "hi", "test", "bye, which is a reply to article 2",
+            and then reads them back from the current server. Next, the client connects to another server (can be primary server)
+            and also reads these articles on page 1.
+Expected State Change: The written to server has the written articles to itself and the primary, In addition, on connection to new client fetch is called and finds seqnums if not on current server.
 Actual State Change: Success

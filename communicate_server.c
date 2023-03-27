@@ -195,23 +195,31 @@ void *read_article_send_queue(void* x){
 			//send article to primary server if we are not the primary
 			if (amPrimary==FALSE){
 				bool_t *result = server_write_1(entry->article, primary_server);
-				if (result ==FALSE) {
+				printf("wrote to primary server\n");
+				if (result == (bool_t *) NULL) {
 					printf("writing server call failed\n");
+				}
+				else if (result == FALSE) {
+					printf("writing server call failed maximum articles reached on server\n");
 				}
 			}
 			
 
 			//send articles to all servers
-			if (num_normal_servers>1){ // if there is 1 normal server and we are it, then we don't need to send to anyone
+			if ((num_normal_servers>1) || amPrimary==TRUE){ // if there is 1 normal server and we are not primary, then we don't need to send to anyone
 				for (int i = 0; i < num_normal_servers; i++) {
-				if ( (strcmp(servers_info[i].ip, server_ip) == 0) && (strcmp(servers_info[i].port, server_port_str) == 0) ) {
-					continue;
+					if ( (strcmp(servers_info[i].ip, server_ip) == 0) && (strcmp(servers_info[i].port, server_port_str) == 0) || ((strcmp(servers_info[i].ip, "") == 0) && (strcmp(servers_info[i].port, "") == 0)) ) {
+						printf("skipping self\n");
+						continue;
+					}
+					printf("sending to server %s:%s\n", servers_info[i].ip, servers_info[i].port);
+					printf("article to write: %s\n", entry->article.text);
+					bool_t *result = server_write_1(entry->article, servers[i]);
+					printf("wrote to normal server\n");
+					if (result == FALSE) {
+						printf("writing server call failed\n");
+					}
 				}
-				bool_t *result = server_write_1(entry->article, servers[i]);
-				if (result == FALSE) {
-					printf("writing server call failed\n");
-				}
-			}
 			}
 			
 		}
@@ -808,7 +816,7 @@ fetch_articles_1_svc(Written_seqnums_t written_seqnums,  struct svc_req *rqstp)
 			//check rest of the servers
 			//according to local-write this server then becomes the primary so we should send to everyone
 			for (int j = 0; j< num_normal_servers; j++) {
-				if ( (strcmp(servers_info[j].ip, server_ip) == 0) && (strcmp(servers_info[j].port, server_port_str) == 0) ) { // we dont want to contact ourselves
+				if ( (strcmp(servers_info[j].ip, server_ip) == 0) && (strcmp(servers_info[j].port, server_port_str) == 0)  || (strcmp(servers_info[i].ip, "") == 0) && (strcmp(servers_info[i].port, "") == 0)) { // we dont want to contact ourselves
 					continue;
 				}
 				returned_article = choose_1(seqnums_needed[i], servers[j]);
@@ -1197,6 +1205,13 @@ server_write_1_svc(Article_t Article,  struct svc_req *rqstp)
 	if (next_aval_article_slot >= NUM_ARTICLES) {
 		result = FALSE;
 		return &result;
+	}
+	//check if articles seqnum already exists
+	for (int i = 0; i < NUM_ARTICLES; i++) {
+		if (articles[i].seqnum == Article.seqnum) {
+			result = TRUE;
+			return &result; // we want to return true because the article already exists
+		}
 	}
 
 	// write the article
